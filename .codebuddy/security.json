@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/olasunkanmi-SE/codebuddy/main/schemas/security-config-v1.json",
+  "version": 1,
+  "allowedPaths": [
+    {
+      "path": "/Users/bigcees/Documents/KALSHI_BOT_AI/KALSHI_CHEAT_AI",
+      "allowReadWrite": true,
+      "description": "KALSHI_CHEAT_AI"
+    }
+  ],
+  "commandDenyPatterns": [],
+  "networkAllowPatterns": [],
+  "networkDenyPatterns": [],
+  "blockedPathPatterns": []
+}

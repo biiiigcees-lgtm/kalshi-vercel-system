@@ -1,0 +1,6 @@
+# Snyk configuration file
+# Points to the kalshi_vercel_system workspace
+project:
+  name: kalshi-vercel-system
+  root: kalshi_vercel_system/
+  target: api/index.py

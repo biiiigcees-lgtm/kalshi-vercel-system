@@ -1,0 +1,39 @@
+{
+  "agents": [
+    {
+      "id": "cline",
+      "name": "Cline",
+      "extension_id": "saoudrizwan.claude-dev",
+      "detected": true,
+      "rules_path": ".clinerules/cross-agent-protocol.md",
+      "inbox_path": ".autoclaw/orchestrator/comms/inboxes/cline/",
+      "hooks_supported": false,
+      "last_heartbeat": null,
+      "status": "detected"
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "extension_id": "Anthropic.claude-code",
+      "detected": true,
+      "rules_path": ".claude/rules/cross-agent-protocol.md",
+      "inbox_path": ".autoclaw/orchestrator/comms/inboxes/claude-code/",
+      "hooks_supported": false,
+      "last_heartbeat": null,
+      "status": "detected"
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf",
+      "extension_id": "codeium.windsurf",
+      "detected": true,
+      "rules_path": ".windsurf/rules/cross-agent-protocol.md",
+      "inbox_path": ".autoclaw/orchestrator/comms/inboxes/windsurf/",
+      "hooks_supported": false,
+      "last_heartbeat": null,
+      "status": "detected"
+    }
+  ],
+  "ide": "Windsurf",
+  "provisioned_at": "2026-05-21T12:50:26.733Z"
+}

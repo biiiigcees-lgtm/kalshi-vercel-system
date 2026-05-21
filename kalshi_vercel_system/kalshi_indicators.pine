@@ -1,0 +1,534 @@
+//@version=6
+indicator("Kalshi KXBTC15M Quantitative Suite", "KALSHI SUITE", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500, max_bars_back=5000)
+
+// ╔══════════════════════════════════════════════════════════════╗
+// ║  MASTER TOGGLES — Enable/Disable Each Sub-System           ║
+// ╚══════════════════════════════════════════════════════════════╝
+grp_master = "◈ Master Controls"
+showSQZ        = input.bool(true,  "Squeeze Momentum", group=grp_master)
+showUT         = input.bool(true,  "UT Bot Alerts",    group=grp_master)
+showWT         = input.bool(true,  "WaveTrend",         group=grp_master)
+showZL         = input.bool(true,  "Zero Lag Signals",  group=grp_master)
+showSATS       = input.bool(true,  "Self-Aware Trend",  group=grp_master)
+showQE         = input.bool(true,  "QuantumEdge Risk",  group=grp_master)
+showPFC        = input.bool(true,  "Predicta Futures",  group=grp_master)
+showLDP        = input.bool(true,  "Liquidity Profiler",group=grp_master)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 1: SQUEEZE MOMENTUM (LazyBear)
+// ═══════════════════════════════════════════════════════════════════
+grp_sqz = "1 ◈ Squeeze Momentum"
+sqz_length = input.int(20, "Squeeze Length", group=grp_sqz)
+multBB     = input.float(2.0, "BB Deviation Multiplier", group=grp_sqz)
+multKC     = input.float(1.5, "KC ATR Multiplier", group=grp_sqz)
+
+sqz_basis   = ta.sma(close, sqz_length)
+sqz_dev     = multBB * ta.stdev(close, sqz_length)
+sqz_upperBB = sqz_basis + sqz_dev
+sqz_lowerBB = sqz_basis - sqz_dev
+
+sqz_ma      = ta.ema(close, sqz_length)
+sqz_range_tr = ta.tr(true)
+sqz_rangema = ta.ema(sqz_range_tr, sqz_length)
+sqz_upperKC = sqz_ma + sqz_rangema * multKC
+sqz_lowerKC = sqz_ma - sqz_rangema * multKC
+
+sqz_on  = (sqz_lowerBB > sqz_lowerKC) and (sqz_upperBB < sqz_upperKC)
+sqz_off = (sqz_lowerBB < sqz_lowerKC) and (sqz_upperBB > sqz_upperKC)
+
+sqz_color = sqz_on ? color.black : (sqz_off ? color.gray : color.blue)
+plotshape(showSQZ, title="SQZ: Squeeze Dot", style=shape.circle, location=location.top, color=sqz_color, size=size.tiny)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 2: UT BOT ALERTS (Yo_adriiiiaan)
+// ═══════════════════════════════════════════════════════════════════
+grp_ut = "2 ◈ UT Bot Alerts"
+ut_key_val    = input.float(1.0, "UT Key Value Sensitivity", group=grp_ut)
+ut_atr_period = input.int(10, "UT ATR Period", group=grp_ut)
+
+ut_xATR  = ta.atr(ut_atr_period)
+ut_nLoss = ut_key_val * ut_xATR
+
+var float ut_xATRTrailingStop = na
+ut_xATRTrailingStop := (close > nz(ut_xATRTrailingStop, 0) and close > nz(ut_xATRTrailingStop, 0))? math.max(nz(ut_xATRTrailingStop), close - ut_nLoss) :
+                        (close < nz(ut_xATRTrailingStop, 0) and close < nz(ut_xATRTrailingStop, 0))? math.min(nz(ut_xATRTrailingStop), close + ut_nLoss) :
+                        (close > nz(ut_xATRTrailingStop, 0))? close - ut_nLoss : close + ut_nLoss
+
+ut_above = ta.crossover(close, ut_xATRTrailingStop)
+ut_below = ta.crossover(ut_xATRTrailingStop, close)
+
+ut_buy_sig  = (close > ut_xATRTrailingStop) and ut_above
+ut_sell_sig = (close < ut_xATRTrailingStop) and ut_below
+
+plotshape(showUT and ut_buy_sig,  "UT: Buy Signal",  text="BUY (YES)", style=shape.labelup,   location=location.belowbar, color=color.green, textcolor=color.white, size=size.small)
+plotshape(showUT and ut_sell_sig, "UT: Sell Signal", text="SELL (NO)", style=shape.labeldown, location=location.abovebar, color=color.red,   textcolor=color.white, size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 3: WAVETREND OSCILLATOR (LazyBear) — Combined v6 + Original
+// ═══════════════════════════════════════════════════════════════════
+grp_wt = "3 ◈ WaveTrend"
+wt_n1    = input.int(10, "Channel Length", group=grp_wt)
+wt_n2    = input.int(21, "Average Length", group=grp_wt)
+wt_ob1   = input.int(60, "Over Bought L1", group=grp_wt)
+wt_ob2   = input.int(53, "Over Bought L2", group=grp_wt)
+wt_os1   = input.int(-60, "Over Sold L1", group=grp_wt)
+wt_os2   = input.int(-53, "Over Sold L2", group=grp_wt)
+
+wt_ap  = hlc3
+wt_esa = ta.ema(wt_ap, wt_n1)
+wt_d   = ta.ema(math.abs(wt_ap - wt_esa), wt_n1)
+wt_ci  = (wt_ap - wt_esa) / (0.015 * wt_d)
+wt_tci = ta.ema(wt_ci, wt_n2)
+
+wt_wt1 = wt_tci
+wt_wt2 = ta.sma(wt_wt1, 4)
+
+wt_reversal_buy  = ta.crossover(wt_wt1, wt_wt2) and wt_wt1 < wt_os2
+wt_reversal_sell = ta.crossunder(wt_wt1, wt_wt2) and wt_wt1 > wt_ob2
+
+plotshape(showWT and wt_reversal_buy,  "WT: Oversold Reversal", text="WT Buy",  style=shape.triangleup,   location=location.belowbar, color=color.lime,   textcolor=color.black, size=size.small)
+plotshape(showWT and wt_reversal_sell, "WT: Overbought Reversal", text="WT Sell", style=shape.triangledown, location=location.abovebar, color=color.orange, textcolor=color.black, size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 4: ZERO LAG SIGNALS FOR LOOP [QuantAlgo]
+// CC BY-NC-SA 4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/
+// ═══════════════════════════════════════════════════════════════════
+grp_zl = "4 ◈ Zero Lag [QuantAlgo]"
+zl_preset          = input.string("Default", "Preset Configuration", options=["Default", "Fast Response", "Smooth Trend"], group=grp_zl)
+zl_length          = input.int(50, "Zero Lag Length", minval=1, group=grp_zl)
+zl_volatility_mult = input.float(1.5, "Volatility Multiplier", minval=0.1, group=grp_zl)
+zl_loop_start      = input.int(1, "Loop Start", minval=1, group=grp_zl)
+zl_loop_end        = input.int(70, "Loop End", minval=1, group=grp_zl)
+zl_threshold_up    = input.int(5, "Threshold Uptrend", group=grp_zl)
+zl_threshold_down  = input.int(-5, "Threshold Downtrend", group=grp_zl)
+zl_color_preset    = input.string("Custom", "Color Preset", options=["Classic", "Aqua", "Cosmic", "Cyber", "Neon", "Custom"], group=grp_zl)
+zl_bullcolor       = input.color(#00ffaa, "Bullish Color", group=grp_zl)
+zl_bearcolor       = input.color(#ff0000, "Bearish Color", group=grp_zl)
+zl_show_signals    = input.bool(true, "Show Signal Markers", group=grp_zl)
+zl_paint_candles   = input.bool(true, "Color Candles", group=grp_zl)
+zl_show_bg_lines   = input.bool(false, "Signal Change Lines", group=grp_zl)
+
+// Apply presets
+zl_len          = zl_preset == "Fast Response" ? 30 : zl_preset == "Smooth Trend" ? 70 : zl_length
+zl_vol_mult     = zl_preset == "Fast Response" ? 1.2 : zl_preset == "Smooth Trend" ? 2.0 : zl_volatility_mult
+zl_lp_end       = zl_preset == "Fast Response" ? 45 : zl_preset == "Smooth Trend" ? 100 : zl_loop_end
+zl_thresh_up    = zl_preset == "Fast Response" ? 3 : zl_preset == "Smooth Trend" ? 8 : zl_threshold_up
+zl_thresh_down  = zl_preset == "Fast Response" ? -3 : zl_preset == "Smooth Trend" ? -8 : zl_threshold_down
+
+// Zero lag EMA
+zl_lag = math.floor((zl_len - 1) / 2)
+zl_basis = ta.ema(close + (close - close[zl_lag]), zl_len)
+zl_volatility = ta.highest(ta.atr(zl_len), zl_len * 3) * zl_vol_mult
+
+// Loop score
+zl_forloop_analysis(basis_price) =>
+    zl_sum = 0.0
+    for i = zl_loop_start to zl_lp_end by 1
+        zl_sum += (basis_price > basis_price[i] ? 1 : -1)
+    zl_sum
+
+zl_score = zl_forloop_analysis(zl_basis)
+
+zl_long_signal = zl_score > zl_thresh_up and close > zl_basis + zl_volatility
+zl_short_signal = zl_score < zl_thresh_down and close < zl_basis - zl_volatility
+
+var int zl_trend = 0
+if zl_long_signal
+    zl_trend := 1
+else if zl_short_signal
+    zl_trend := -1
+
+var int zl_prev_trend = 0
+zl_trend_changed = zl_trend != zl_prev_trend
+zl_prev_trend := zl_trend
+
+// Colors
+[zl_bull_color, zl_bear_color] = switch zl_color_preset
+    "Classic" => [#00ff00, #ff0000]
+    "Aqua"    => [#00d4ff, #ff8c00]
+    "Cosmic"  => [#49ffce, #9932cc]
+    "Cyber"   => [#00cccc, #ff6600]
+    "Neon"    => [#ffff00, #ff00ff]
+    "Custom"  => [zl_bullcolor, zl_bearcolor]
+
+zl_trend_col = zl_trend == 1 ? zl_bull_color : zl_trend == -1 ? zl_bear_color : na
+
+// Plots
+zl_p_basis = plot(showZL ? zl_basis : na, "ZL: Zero Lag Basis", color=zl_trend_col, linewidth=3, display=showZL ? display.all : display.none)
+zl_p_price = plot(hl2, "ZL: Price", display=display.none, editable=false)
+fill(zl_p_basis, zl_p_price, hl2, zl_basis, na, color.new(zl_trend_col, 20))
+
+plotshape(showZL and zl_trend_changed and zl_trend == 1 ? zl_basis : na, "ZL: Bullish Trend", shape.labelup, location.absolute, zl_bull_color, text="𝑳", textcolor=#000000, size=size.small, force_overlay=true)
+plotshape(showZL and zl_trend_changed and zl_trend == -1 ? zl_basis : na, "ZL: Bearish Trend", shape.labeldown, location.absolute, zl_bear_color, text="𝑺", textcolor=#ffffff, size=size.small, force_overlay=true)
+bgcolor(zl_show_bg_lines and showZL ? (ta.crossover(zl_trend, 0) ? zl_bull_color : ta.crossunder(zl_trend, 0) ? zl_bear_color : na) : na)
+barcolor(zl_paint_candles and showZL ? (zl_trend == 1 ? zl_bull_color : zl_trend == -1 ? zl_bear_color : na) : na)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 5: SELF-AWARE TREND SYSTEM [WillyAlgoTrader] v1.9.0 (CORE)
+// ═══════════════════════════════════════════════════════════════════
+grp_sats_main  = "5a ◈ SATS Main Settings"
+grp_sats_tqi   = "5b ◈ SATS Trend Quality"
+grp_sats_risk  = "5c ◈ SATS Risk Mgmt"
+grp_sats_vis   = "5d ◈ SATS Visual"
+grp_sats_dash  = "5e ◈ SATS Dashboard"
+
+// SATS Inputs
+sats_preset       = input.string("Auto", "Preset", options=["Auto","Custom","Scalping","Default","Swing","Crypto 24/7"], group=grp_sats_main)
+sats_atrLen       = input.int(13, "ATR Length", minval=5, maxval=100, group=grp_sats_main)
+sats_baseMult     = input.float(2.0, "Base Band Width (xATR)", minval=0.5, maxval=5.0, step=0.1, group=grp_sats_main)
+sats_useTqi       = input.bool(true, "Enable Trend Quality Engine", group=grp_sats_tqi)
+sats_qualityStr   = input.float(0.4, "Quality Influence", minval=0.0, maxval=1.0, step=0.05, group=grp_sats_tqi)
+sats_erLen        = input.int(20, "Efficiency Window", minval=5, maxval=100, group=grp_sats_tqi)
+sats_useAsym      = input.bool(true, "Asymmetric Bands", group=grp_sats_tqi)
+sats_asymStr      = input.float(0.5, "Asymmetry Strength", minval=0.0, maxval=1.0, step=0.05, group=grp_sats_tqi)
+sats_useCharFlip  = input.bool(true, "Character-Flip Detection", group=grp_sats_tqi)
+sats_slMult       = input.float(1.5, "SL Buffer (xATR)", minval=0.3, maxval=5.0, step=0.1, group=grp_sats_risk)
+sats_tp1R         = input.float(1.0, "TP1 (R)", minval=0.5, maxval=10.0, step=0.1, group=grp_sats_risk)
+sats_tp2R         = input.float(2.0, "TP2 (R)", minval=0.5, maxval=10.0, step=0.1, group=grp_sats_risk)
+sats_tp3R         = input.float(3.0, "TP3 (R)", minval=0.5, maxval=10.0, step=0.1, group=grp_sats_risk)
+sats_showBands    = input.bool(true, "Show SuperTrend Bands", group=grp_sats_vis)
+sats_showSignals  = input.bool(true, "Show Signal Labels", group=grp_sats_vis)
+sats_showBg       = input.bool(false, "Show Trend Background", group=grp_sats_vis)
+sats_showDash     = input.bool(true, "Show Dashboard", group=grp_sats_dash)
+sats_bullColor    = input.color(#00E676, "Bull", inline="sats_c1", group=grp_sats_vis)
+sats_bearColor    = input.color(#FF5252, "Bear", inline="sats_c1", group=grp_sats_vis)
+
+// SATS Calculation
+sats_tfMinutes = timeframe.in_seconds(timeframe.period) / 60
+sats_resolved = sats_preset
+if sats_preset == "Auto"
+    sats_resolved := sats_tfMinutes <= 5 ? "Scalping" : (sats_tfMinutes <= 240 ? "Default" : "Swing")
+
+sats_effAtrLen = switch sats_resolved
+    "Scalping"=>10;"Default"=>14;"Swing"=>21;"Crypto 24/7"=>14;=>sats_atrLen
+
+sats_effBaseMult = switch sats_resolved
+    "Scalping"=>1.5;"Default"=>2.0;"Swing"=>2.5;"Crypto 24/7"=>2.8;=>sats_baseMult
+
+sats_effErLen = switch sats_resolved
+    "Scalping"=>14;"Default"=>20;"Swing"=>30;"Crypto 24/7"=>20;=>sats_erLen
+
+sats_rawAtr = nz(ta.atr(sats_effAtrLen), 0.0)
+sats_erValue = nz(ta.rma(math.abs(close - close[1]), sats_effErLen) > 0 ? math.abs(close - close[sats_effErLen]) / ta.rma(math.abs(close - close[1]), sats_effErLen) : 0, 0.0)
+sats_effAtr = sats_rawAtr * (0.5 + 0.5 * sats_erValue)
+sats_atrVal = sats_effAtr
+
+// SATS TQI
+sats_tqiEr = math.min(sats_erValue, 1.0)
+sats_structHi = ta.highest(high, 20)
+sats_structLo = ta.lowest(low, 20)
+sats_pricePos = (sats_structHi - sats_structLo) > 0 ? (close - sats_structLo) / (sats_structHi - sats_structLo) : 0.5
+sats_tqiStruct = math.min(math.abs(sats_pricePos - 0.5) * 2.0, 1.0)
+sats_tqi = (sats_tqiEr * 0.4 + sats_tqiStruct * 0.3 + 0.3 * 0.5)  // simplified TQI blend
+
+// SATS SuperTrend
+sats_hl2 = (high + low) / 2
+sats_lowerBandRaw = close - sats_atrVal * sats_effBaseMult
+sats_upperBandRaw = close + sats_atrVal * sats_effBaseMult
+
+var float sats_lowerBand = na
+var float sats_upperBand = na
+var int sats_trend = 1
+
+sats_lowerBand := na(sats_lowerBand[1]) ? sats_lowerBandRaw : (close[1] > sats_lowerBand[1] ? math.max(sats_lowerBandRaw, sats_lowerBand[1]) : sats_lowerBandRaw)
+sats_upperBand := na(sats_upperBand[1]) ? sats_upperBandRaw : (close[1] < sats_upperBand[1] ? math.min(sats_upperBandRaw, sats_upperBand[1]) : sats_upperBandRaw)
+
+sats_priceFlipUp   = sats_trend[1] == -1 and close > sats_upperBand[1]
+sats_priceFlipDown = sats_trend[1] ==  1 and close < sats_lowerBand[1]
+
+sats_trend := na(sats_trend[1]) ? 1 : (sats_priceFlipUp ? 1 : (sats_priceFlipDown ? -1 : nz(sats_trend[1], 1)))
+
+sats_stLine = sats_trend == 1 ? sats_lowerBand : sats_upperBand
+sats_flipUp   = sats_trend ==  1 and nz(sats_trend[1]) == -1
+sats_flipDown = sats_trend == -1 and nz(sats_trend[1]) ==  1
+
+// SATS TP Calculation
+sats_risk = sats_trend == 1 ? (close - sats_lowerBand) : (sats_upperBand - close)
+sats_tp1 = sats_trend == 1 ? close + sats_risk * sats_tp1R : close - sats_risk * sats_tp1R
+sats_tp2 = sats_trend == 1 ? close + sats_risk * sats_tp2R : close - sats_risk * sats_tp2R
+sats_tp3 = sats_trend == 1 ? close + sats_risk * sats_tp3R : close - sats_risk * sats_tp3R
+
+// SATS Visualization
+sats_lineColor = sats_trend == 1 ? sats_bullColor : sats_bearColor
+plot(showSATS and sats_showBands ? sats_stLine : na, "SATS: SuperTrend", color=sats_lineColor, linewidth=2)
+bgcolor(showSATS and sats_showBg ? (sats_trend == 1 ? color.new(sats_bullColor, 92) : color.new(sats_bearColor, 92)) : na)
+
+if showSATS and sats_showSignals
+    if sats_flipUp
+        label.new(bar_index, low, "▲ SATS BUY", color=sats_bullColor, textcolor=color.white, style=label.style_label_up, size=size.small)
+    if sats_flipDown
+        label.new(bar_index, high, "▼ SATS SELL", color=sats_bearColor, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// SATS Dashboard
+if barstate.islast and showSATS and sats_showDash
+    var table sats_t = table.new(position.top_right, 2, 5, bgcolor=color.new(#131722, 5), border_color=color.new(#2A2E39, 0), border_width=1)
+    sats_t.merge_cells(0, 0, 1, 0)
+    table.cell(sats_t, 0, 0, "SATS v1.9.0", text_color=color.white, bgcolor=color.new(#2962FF, 0), text_size=size.small, text_halign=text.align_center)
+    table.cell(sats_t, 0, 1, "Trend", text_color=#9E9E9E, text_size=size.small)
+    table.cell(sats_t, 1, 1, sats_trend == 1 ? "Bullish ▲" : "Bearish ▼", text_color=sats_lineColor, text_size=size.small)
+    table.cell(sats_t, 0, 2, "TQI", text_color=#9E9E9E, text_size=size.small)
+    table.cell(sats_t, 1, 2, str.tostring(sats_tqi, "#.00"), text_color=sats_tqi > 0.6 ? sats_bullColor : sats_tqi > 0.35 ? #FFEB3B : sats_bearColor, text_size=size.small)
+    table.cell(sats_t, 0, 3, "ER", text_color=#9E9E9E, text_size=size.small)
+    table.cell(sats_t, 1, 3, str.tostring(sats_erValue, "#.00"), text_color=color.white, text_size=size.small)
+    table.cell(sats_t, 0, 4, "Preset", text_color=#9E9E9E, text_size=size.small)
+    table.cell(sats_t, 1, 4, sats_resolved, text_color=color.white, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 6: QUANTUMEDGE — Manual Pro + Risk Safety
+// MPL 2.0 — https://mozilla.org/MPL/2.0/
+// ═══════════════════════════════════════════════════════════════════
+grp_qe = "6 ◈ QuantumEdge Risk"
+
+qe_totalWallet = input.float(50.0, "Total Bank", group=grp_qe)
+qe_riskPercent = input.float(33.0, "% per Trade", group=grp_qe)
+qe_lev         = input.int(20, "Leverage", group=grp_qe)
+qe_emaFast     = input.int(12, "Fast EMA", group=grp_qe)
+qe_emaSlow     = input.int(26, "Slow EMA", group=grp_qe)
+qe_minScore    = input.int(80, "Min. Signal Strength %", group=grp_qe)
+qe_volMult     = input.float(1.8, "Min. Relative Volume", group=grp_qe)
+qe_atrMult     = input.float(1.5, "Initial SL ATR", group=grp_qe)
+qe_tp1Mult     = input.float(1.2, "TP1 ATR (50%)", group=grp_qe)
+qe_tp2Mult     = input.float(2.3, "TP2 ATR (30%)", group=grp_qe)
+qe_tp3Mult     = input.float(3.5, "TP3 ATR (Start Trail)", group=grp_qe)
+qe_trailStep   = input.float(0.8, "Trail Distance ATR", group=grp_qe)
+
+qe_emaFastVal = ta.ema(close, qe_emaFast)
+qe_emaSlowVal = ta.ema(close, qe_emaSlow)
+qe_vwapVal    = ta.vwap(hlc3)
+qe_atrVal     = ta.atr(14)
+[qe_plusDI, qe_minusDI, qe_adxVal] = ta.dmi(14, 14)
+qe_rsiVal     = ta.rsi(close, 14)
+qe_avgVol     = ta.sma(volume, 20)
+qe_relVol     = volume / qe_avgVol
+qe_vocalSig   = volume > qe_avgVol * qe_volMult
+
+qe_get_metrics() =>
+    float b = 0, float r = 0
+    b += (close > qe_vwapVal ? 25 : 0); r += (close < qe_vwapVal ? 25 : 0)
+    b += (qe_rsiVal > 52 ? 25 : 0);      r += (qe_rsiVal < 48 ? 25 : 0)
+    b += (qe_emaFastVal > qe_emaSlowVal ? 25 : 0); r += (qe_emaFastVal < qe_emaSlowVal ? 25 : 0)
+    b += (qe_adxVal > 20 and qe_plusDI > qe_minusDI ? 25 : 0); r += (qe_adxVal > 20 and qe_minusDI > qe_plusDI ? 25 : 0)
+    [b, r]
+
+[qe_bullPct, qe_bearPct] = qe_get_metrics()
+
+qe_longC_vis  = ta.crossover(qe_emaFastVal, qe_emaSlowVal) and qe_bullPct >= qe_minScore and qe_vocalSig
+qe_shortC_vis = ta.crossunder(qe_emaFastVal, qe_emaSlowVal) and qe_bearPct >= qe_minScore and qe_vocalSig
+
+plotshape(showQE and qe_longC_vis,  "QE: Buy Arrow",  style=shape.triangleup,   location=location.belowbar, color=#089981, size=size.normal, text="BUY")
+plotshape(showQE and qe_shortC_vis, "QE: Sell Arrow", style=shape.triangledown, location=location.abovebar, color=#f23645, size=size.normal, text="SELL")
+
+// QE Risk Dashboard
+qe_marginUsed  = qe_totalWallet * (qe_riskPercent / 100)
+qe_posSizeUSD  = qe_marginUsed * qe_lev
+
+if barstate.islast and showQE
+    var table qe_t = table.new(position.bottom_right, 2, 4, bgcolor=color.new(#0b0e14, 0), border_color=color.new(#b2b5be, 80), border_width=1)
+    table.cell(qe_t, 0, 0, "QuantumEdge Risk", text_color=color.white, text_size=size.small)
+    table.cell(qe_t, 0, 1, "Pos. Size (" + str.tostring(qe_lev) + "x)", text_color=#b2b5be, text_size=size.small)
+    table.cell(qe_t, 1, 1, "$" + str.tostring(qe_posSizeUSD, "#"), text_color=#5b9cf6, text_size=size.small)
+    table.cell(qe_t, 0, 2, "Margin Req.", text_color=#b2b5be, text_size=size.small)
+    table.cell(qe_t, 1, 2, "$" + str.tostring(qe_marginUsed, "#.##"), text_color=#ffcc00, text_size=size.small)
+    table.cell(qe_t, 0, 3, "Score B/M", text_color=#b2b5be, text_size=size.small)
+    table.cell(qe_t, 1, 3, str.tostring(qe_bullPct) + "% / " + str.tostring(qe_bearPct) + "%", text_color=#5b9cf6, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 7: PREDICTA FUTURES — Next Candle Predictor V4
+// ═══════════════════════════════════════════════════════════════════
+grp_pfc = "7 ◈ Predicta Futures V4"
+
+pfc_atrLen       = input.int(14, "ATR Period", minval=5, maxval=50, group=grp_pfc)
+pfc_stFactor     = input.float(3.0, "Trend Factor", minval=1.0, maxval=5.0, step=0.1, group=grp_pfc)
+pfc_stPeriod     = input.int(10, "Trend ATR Period", minval=5, maxval=30, group=grp_pfc)
+pfc_minConf      = input.int(5, "Min Confluence (1-8)", minval=3, maxval=8, group=grp_pfc)
+pfc_minVolRatio  = input.float(0.8, "Min Volume Ratio", minval=0.5, maxval=2.0, step=0.1, group=grp_pfc)
+pfc_adxThresh    = input.int(25, "ADX Threshold", minval=15, maxval=40, group=grp_pfc)
+pfc_showTable    = input.bool(true, "Show Analysis Table", group=grp_pfc)
+pfc_showProj     = input.bool(true, "Show Prediction Candles", group=grp_pfc)
+
+// Custom Supertrend
+pfc_trendAtr = ta.atr(pfc_stPeriod)
+pfc_hl2Val = (high + low) / 2
+pfc_upperBandRaw = pfc_hl2Val + (pfc_stFactor * pfc_trendAtr)
+pfc_lowerBandRaw = pfc_hl2Val - (pfc_stFactor * pfc_trendAtr)
+
+var float pfc_upperBand = na
+var float pfc_lowerBand = na
+var int pfc_trendDir = 1
+
+pfc_prevUpper = nz(pfc_upperBand[1], pfc_upperBandRaw)
+pfc_prevLower = nz(pfc_lowerBand[1], pfc_lowerBandRaw)
+pfc_prevDir = nz(pfc_trendDir[1], 1)
+
+pfc_lowerBand := close[1] > pfc_prevLower ? math.max(pfc_lowerBandRaw, pfc_prevLower) : pfc_lowerBandRaw
+pfc_upperBand := close[1] < pfc_prevUpper ? math.min(pfc_upperBandRaw, pfc_prevUpper) : pfc_upperBandRaw
+pfc_trendDir := pfc_prevDir == -1 ? (close < pfc_lowerBand ? 1 : -1) : (close > pfc_upperBand ? -1 : 1)
+
+pfc_trendLine = pfc_trendDir == -1 ? pfc_lowerBand : pfc_upperBand
+pfc_isUptrend = pfc_trendDir == -1
+pfc_isDowntrend = pfc_trendDir == 1
+
+// Volume Delta
+pfc_candleRange = high - low
+pfc_buyVolume = pfc_candleRange > 0 ? volume * (close - low) / pfc_candleRange : volume * 0.5
+pfc_sellVolume = pfc_candleRange > 0 ? volume * (high - close) / pfc_candleRange : volume * 0.5
+pfc_volumeDelta = pfc_buyVolume - pfc_sellVolume
+pfc_deltaEma = ta.ema(pfc_volumeDelta, 10)
+pfc_deltaBullish = pfc_volumeDelta > 0
+pfc_deltaBearish = pfc_volumeDelta < 0
+
+// Standard indicators
+pfc_ema8 = ta.ema(close, 8)
+pfc_ema21 = ta.ema(close, 21)
+pfc_ema50 = ta.ema(close, 50)
+pfc_rsi = ta.rsi(close, 14)
+[pfc_macdLine, pfc_signalLine, pfc_macdHist] = ta.macd(close, 12, 26, 9)
+pfc_stochK = ta.stoch(close, high, low, 14)
+pfc_stochD = ta.sma(pfc_stochK, 3)
+pfc_volSma = ta.sma(volume, 20)
+pfc_volRatio = nz(volume / pfc_volSma, 1.0)
+[pfc_diPlus, pfc_diMinus, pfc_adxVal] = ta.dmi(14, 14)
+
+// Scoring (simplified — 6 factors, match original weights)
+pfc_scLong = (pfc_isUptrend ? 100 : 0) * 0.23 + (pfc_macdLine > pfc_signalLine ? 100 : 20) * 0.18 + (pfc_deltaBullish ? 100 : 20) * 0.15 + (pfc_rsi > 50 ? 70 : 25) * 0.12 + (pfc_stochK > pfc_stochD ? 70 : 25) * 0.12 + (pfc_adxVal > 25 ? 70 : 30) * 0.10 + (pfc_volRatio > 0.8 ? 60 : 25) * 0.10
+pfc_scShort = (pfc_isDowntrend ? 100 : 0) * 0.23 + (pfc_macdLine < pfc_signalLine ? 100 : 20) * 0.18 + (pfc_deltaBearish ? 100 : 20) * 0.15 + (pfc_rsi < 50 ? 70 : 25) * 0.12 + (pfc_stochK < pfc_stochD ? 70 : 25) * 0.12 + (pfc_adxVal > 25 ? 70 : 30) * 0.10 + (pfc_volRatio > 0.8 ? 60 : 25) * 0.10
+
+pfc_longScore = math.round(math.min(100, math.max(0, pfc_scLong)))
+pfc_shortScore = math.round(math.min(100, math.max(0, pfc_scShort)))
+pfc_totalRaw = pfc_longScore + pfc_shortScore
+pfc_longPct = pfc_totalRaw > 0 ? math.round(pfc_longScore / pfc_totalRaw * 100) : 50
+
+// Confluence (8-point)
+pfc_confL = (pfc_isUptrend ? 1:0)+(pfc_ema8>pfc_ema21?1:0)+(pfc_macdLine>pfc_signalLine?1:0)+(pfc_stochK>pfc_stochD?1:0)+(pfc_volRatio>=pfc_minVolRatio?1:0)+(pfc_adxVal>pfc_adxThresh?1:0)+(pfc_rsi>50?1:0)+(pfc_deltaBullish?1:0)
+pfc_confS = (pfc_isDowntrend ? 1:0)+(pfc_ema8<pfc_ema21?1:0)+(pfc_macdLine<pfc_signalLine?1:0)+(pfc_stochK<pfc_stochD?1:0)+(pfc_volRatio>=pfc_minVolRatio?1:0)+(pfc_adxVal>pfc_adxThresh?1:0)+(pfc_rsi<50?1:0)+(pfc_deltaBearish?1:0)
+
+pfc_longPerfect = pfc_isUptrend and pfc_confL >= pfc_minConf and pfc_volRatio >= pfc_minVolRatio and pfc_deltaBullish
+pfc_shortPerfect = pfc_isDowntrend and pfc_confS >= pfc_minConf and pfc_volRatio >= pfc_minVolRatio and pfc_deltaBearish
+
+// PFC Plots
+pfc_stColor = pfc_isUptrend ? #089981 : #f23645
+pfc_stPlot = plot(showPFC ? pfc_trendLine : na, "PFC: Predicta Trend", color=pfc_stColor, linewidth=2)
+pfc_bodyPlot = plot(hlc3, "PFC: Body Mid", display=display.none)
+fill(pfc_stPlot, pfc_bodyPlot, color=pfc_isUptrend ? color.new(#089981, 85) : color.new(#f23645, 85))
+
+// PFC Signal markers
+if showPFC
+    plotshape(pfc_longPerfect, "PFC: Long Perfect", shape.diamond, location.belowbar, color=#f0b90b, size=size.tiny)
+    plotshape(pfc_shortPerfect, "PFC: Short Perfect", shape.diamond, location.abovebar, color=#f0b90b, size=size.tiny)
+
+// PFC Table
+if barstate.islast and showPFC and pfc_showTable
+    var table pfc_t = table.new(position.top_right, 2, 4, bgcolor=color.new(#131722, 0), border_width=0, frame_width=2, frame_color=#787b86)
+    pfc_t.merge_cells(0, 0, 1, 0)
+    table.cell(pfc_t, 0, 0, "PREDICTA V4", text_color=#f0b90b, bgcolor=#131722, text_size=size.small, text_halign=text.align_center)
+    table.cell(pfc_t, 0, 1, "LONG", text_color=color.white, bgcolor=#089981, text_size=size.normal, text_halign=text.align_center)
+    table.cell(pfc_t, 1, 1, str.tostring(pfc_longPct) + "%", text_color=color.white, bgcolor=#089981, text_size=size.normal, text_halign=text.align_center)
+    table.cell(pfc_t, 0, 2, "Confluence", text_color=#f0b90b, bgcolor=#131722, text_size=size.small)
+    table.cell(pfc_t, 1, 2, str.tostring(pfc_confL) + "/8", text_color=pfc_confL >= pfc_minConf ? #089981 : #787b86, bgcolor=#131722, text_size=size.small)
+    table.cell(pfc_t, 0, 3, "Status", text_color=color.white, bgcolor=color.black, text_size=size.normal, text_halign=text.align_center)
+    table.cell(pfc_t, 1, 3, pfc_longPerfect ? "⚡ PERFECT" : "WAIT", text_color=pfc_longPerfect ? #089981 : #787b86, bgcolor=color.black, text_size=size.normal, text_halign=text.align_center)
+
+// ═══════════════════════════════════════════════════════════════════
+// SECTION 8: LIQUIDITY DELTA PROFILER [LuxAlgo]
+// CC BY-NC-SA 4.0 — https://creativecommons.org/licenses/by-nc-sa/4.0/
+// ═══════════════════════════════════════════════════════════════════
+grp_ldp = "8 ◈ Liquidity Profiler"
+
+ldp_length          = input.int(15, "Pivot Length", minval=2, group=grp_ldp)
+ldp_maxZones        = input.int(10, "Max Zones per Type", minval=1, maxval=40, group=grp_ldp)
+ldp_showSwept       = input.bool(true, "Show Swept Zones", group=grp_ldp)
+ldp_filterOverlaps  = input.bool(true, "Filter Overlapping Zones", group=grp_ldp)
+ldp_showDecay       = input.bool(true, "Show Zone Decay", group=grp_ldp)
+ldp_zoneCapacity    = input.float(5.0, "Zone Volume Capacity", minval=1.0, group=grp_ldp)
+ldp_enableReversals = input.bool(true, "Enable Reversal Detection", group=grp_ldp)
+ldp_bslColor        = input.color(color.new(#f23645, 0), "BSL Color", group=grp_ldp)
+ldp_sslColor        = input.color(color.new(#089981, 0), "SSL Color", group=grp_ldp)
+ldp_buyDeltaColor   = input.color(color.new(#089981, 0), "Buy Delta Fill", group=grp_ldp)
+ldp_sellDeltaColor  = input.color(color.new(#f23645, 0), "Sell Delta Fill", group=grp_ldp)
+
+ldp_atr = ta.atr(14)
+ldp_ph = ta.pivothigh(high, ldp_length, ldp_length)
+ldp_pl = ta.pivotlow(low, ldp_length, ldp_length)
+ldp_avgVol = nz(ta.sma(volume, ldp_length))
+if ldp_avgVol == 0
+    ldp_avgVol := 1
+ldp_currentZoneCap = ldp_avgVol * ldp_zoneCapacity
+
+// LDP Zone management
+var ldp_zoneBoxes = array.new<box>()
+var ldp_zoneLabels = array.new<label>()
+
+// Simplified LDP: mark BSL/SSL zones with boxes
+if not na(ldp_ph) and bar_index >= ldp_length
+    ldp_pivotIdx = bar_index - ldp_length
+    ldp_pHigh = high[ldp_length]
+    ldp_pBot = math.min(close[ldp_length], open[ldp_length])
+    if ldp_pHigh - ldp_pBot < ldp_atr[ldp_length] * 0.1
+        ldp_pBot := ldp_pHigh
+    b = box.new(ldp_pivotIdx, ldp_pHigh, bar_index, ldp_pBot, border_color=color.new(ldp_bslColor, 70), bgcolor=color.new(ldp_bslColor, 85))
+    array.push(ldp_zoneBoxes, b)
+    l = label.new(bar_index, ldp_pHigh, "BSL", style=label.style_label_down, color=ldp_bslColor, textcolor=color.white, size=size.tiny)
+    array.push(ldp_zoneLabels, l)
+
+if not na(ldp_pl) and bar_index >= ldp_length
+    ldp_pivotIdx = bar_index - ldp_length
+    ldp_pLow = low[ldp_length]
+    ldp_pTop = math.max(close[ldp_length], open[ldp_length])
+    if ldp_pTop - ldp_pLow < ldp_atr[ldp_length] * 0.1
+        ldp_pTop := ldp_pLow
+    b = box.new(ldp_pivotIdx, ldp_pTop, bar_index, ldp_pLow, border_color=color.new(ldp_sslColor, 70), bgcolor=color.new(ldp_sslColor, 85))
+    array.push(ldp_zoneBoxes, b)
+    l = label.new(bar_index, ldp_pLow, "SSL", style=label.style_label_up, color=ldp_sslColor, textcolor=color.white, size=size.tiny)
+    array.push(ldp_zoneLabels, l)
+
+// Sweep detection & decay
+if array.size(ldp_zoneBoxes) > 0
+    for ldp_i = array.size(ldp_zoneBoxes) - 1 to 0
+        if ldp_i < array.size(ldp_zoneBoxes)
+            ldp_b = array.get(ldp_zoneBoxes, ldp_i)
+            ldp_bTop = box.get_top(ldp_b)
+            ldp_bBot = box.get_bottom(ldp_b)
+            ldp_bLeft = box.get_left(ldp_b)
+            ldp_bRight = box.get_right(ldp_b)
+            ldp_bMid = (ldp_bTop + ldp_bBot) / 2
+            ldp_isBsl = ldp_bTop > ldp_bMid  // BSL zones have top above midpoint
+            
+            ldp_swept = ldp_isBsl ? (high > ldp_bTop) : (low < ldp_bBot)
+            if ldp_swept and not showLDP
+                array.remove(ldp_zoneBoxes, ldp_i)
+                box.delete(ldp_b)
+                
+// LDP Dashboard
+if barstate.islast and showLDP
+    var table ldp_t = table.new(position.bottom_left, 2, 3, bgcolor=color.new(#161616, 0), border_width=0, frame_color=#2E2E2E, frame_width=1)
+    ldp_t.merge_cells(0, 0, 1, 0)
+    table.cell(ldp_t, 0, 0, "Liquidity Profiler", text_color=#DBDBDB, bgcolor=#2E2E2E, text_size=size.small, text_halign=text.align_center)
+    table.cell(ldp_t, 0, 1, "BSL Zones", text_color=#808080, text_size=size.small)
+    table.cell(ldp_t, 1, 1, str.tostring(array.size(ldp_zoneBoxes)), text_color=color.white, text_size=size.small)
+    table.cell(ldp_t, 0, 2, "ATR", text_color=#808080, text_size=size.small)
+    table.cell(ldp_t, 1, 2, str.tostring(ldp_atr, "#.#####"), text_color=color.white, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════
+// ALERTS — Combined across all sub-systems
+// ═══════════════════════════════════════════════════════════════════
+alertcondition(showUT and ut_buy_sig,  "UT: Buy Signal",  "UT Bot Buy Signal: {{exchange}}:{{ticker}}")
+alertcondition(showUT and ut_sell_sig, "UT: Sell Signal", "UT Bot Sell Signal: {{exchange}}:{{ticker}}")
+alertcondition(showZL and zl_trend_changed and zl_trend == 1, "ZL: Long Signal", "Zero Lag Long: {{exchange}}:{{ticker}}")
+alertcondition(showZL and zl_trend_changed and zl_trend == -1, "ZL: Short Signal", "Zero Lag Short: {{exchange}}:{{ticker}}")
+alertcondition(showSATS and sats_flipUp, "SATS: Buy", "SATS Buy: {{exchange}}:{{ticker}}")
+alertcondition(showSATS and sats_flipDown, "SATS: Sell", "SATS Sell: {{exchange}}:{{ticker}}")
+alertcondition(showPFC and pfc_longPerfect, "PFC: Long Perfect", "Predicta Long: {{exchange}}:{{ticker}}")
+alertcondition(showPFC and pfc_shortPerfect, "PFC: Short Perfect", "Predicta Short: {{exchange}}:{{ticker}}")
+
+// ═══════════════════════════════════════════════════════════════════
+// FOOTER — Credits
+// ═══════════════════════════════════════════════════════════════════
+// Indicators merged into single suite:
+//   Squeeze Momentum (LazyBear) — CC BY-NC-SA 4.0
+//   UT Bot Alerts (Yo_adriiiiaan)
+//   WaveTrend (LazyBear) — CC BY-NC-SA 4.0
+//   Zero Lag Signals For Loop (QuantAlgo) — CC BY-NC-SA 4.0
+//   Self-Aware Trend System v1.9.0 (WillyAlgoTrader)
+//   QuantumEdge (CC BY-NC-SA 4.0 / MPL 2.0)
+//   Predicta Futures V4
+//   Liquidity Delta Profiler (LuxAlgo) — CC BY-NC-SA 4.0
