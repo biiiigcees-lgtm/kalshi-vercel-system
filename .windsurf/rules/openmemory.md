@@ -13,7 +13,7 @@ entire session.
 
 Memory = accumulated understanding of codebase + user preferences. Like a colleague who's worked here months.
 
-**project_id:** KALSHI_CHEAT_AI
+**project_id:** biiiigcees-lgtm/kalshi-vercel-system
 
 ## NON-NEGOTIABLE: Memory-First Development
 
