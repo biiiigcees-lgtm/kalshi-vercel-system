@@ -21,3 +21,7 @@ kalshi_private_key.pem
 
 # Vercel
 .vercel/
+.codebuddy
+
+# OpenMemory - IDE/Assistant specific rules
+.windsurf/rules/openmemory.md
